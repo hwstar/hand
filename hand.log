@@ -1,0 +1,18 @@
+hand [ Tue Dec 13 19:10:38 2011 ] (debug): Creating pid file and hooking termination signals.
+hand [ Tue Dec 13 19:10:38 2011 ] (debug): Addressing node 0xff, command 0x00, Numparms 0x00, crc16 = 0
+hand: (debug): TX Packet: 01 FF 00 2A 
+hand: (debug): Stuffed TX Packet: 02 04 01 FF 04 00 2A 03 
+hand [ Tue Dec 13 19:10:38 2011 ] (debug): TX packet sent.
+hand [ Tue Dec 13 19:10:38 2011 ] (debug): Woken for events
+hand [ Tue Dec 13 19:10:38 2011 ] (debug): Rx CRC16: 0x15D7, Calc CRC16 0x15D7
+hand [ Tue Dec 13 19:10:38 2011 ] (debug): Got interrupt packet from address 4
+hand: (debug): Packet Bytes: 03 04 D7 15 
+hand [ Tue Dec 13 19:10:38 2011 ] (debug): Addressing node 0x04, command 0x03, Numparms 0x03, crc16 = 2
+hand [ Tue Dec 13 19:10:38 2011 ] (debug): TX CRC16: 51DB
+hand: (debug): TX Packet: 05 04 03 00 00 00 DB 51 
+hand: (debug): Stuffed TX Packet: 02 05 04 04 04 03 04 00 04 00 04 00 DB 51 03 
+hand [ Tue Dec 13 19:10:38 2011 ] (debug): TX packet sent.
+hand [ Tue Dec 13 19:10:38 2011 ] (debug): Rx CRC16: 0xEFEB, Calc CRC16 0xEFEB
+hand [ Tue Dec 13 19:10:38 2011 ] (debug): CRC OK on response.
+hand [ Tue Dec 13 19:10:38 2011 ] (debug): Interrupt reason code: 0x00
+hand [ Tue Dec 13 19:10:51 2011 ] (debug): Cleaning up for exit.

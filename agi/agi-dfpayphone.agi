@@ -1,0 +1,109 @@
+#!/usr/bin/perl
+
+use strict;
+use integer;
+use Asterisk::AGI;
+
+
+
+my ($x,$client,$result,@response,$AGI,$paid_call,$context,$priority,$callerid);
+
+$AGI= new Asterisk::AGI;
+
+
+sub command{
+	my $result;
+	my $cmdstr;
+	my $i;
+	my $counts_per_C;
+	my $hantst;
+
+	my $plist = $#_;
+	$plist++;
+
+	if($plist < 2){
+		exit 0;
+	}
+
+	$hantst = "/usr/local/sbin/hantst";
+	$cmdstr = sprintf("%s -s %02X %02X", $hantst, $_[0], $_[1] ); 
+
+	for($i = 2; $i < $plist; $i++){
+		$cmdstr = $cmdstr . sprintf(" %02X", $_[$i]);
+	}
+	#print "$cmdstr\n";
+	$result = `$cmdstr`;
+	#print "$result\n";
+
+	if($? == 0){
+		@response = split(" ", $result);
+		shift @response;
+		return @response;
+	}
+	else{
+		exit(1);
+	}
+}
+
+sub initial_rate_test{
+	my $device = shift @_;
+	my $status,$x;
+
+	@response = command($device,0x11,0xA0);
+	sleep(1);
+	@response = command($device,0x12,0);
+
+        $status = $response[0] & 0x02; 
+	return $status;
+
+		
+}
+
+sub set_answer_supv{
+        my $device = shift @_;
+        @response = command($device,0x14,1000%256,1000/256);
+}                                                                                                                                
+sub refund_deposit{
+	my $device = shift @_;
+	@response = command($device,0x11,0xA2);
+}                                                                                                                                
+sub collect_deposit{
+	my $device = shift @_;
+	@response = command($device,0x11,0xA1);
+}
+
+
+
+
+my %input = $AGI->ReadParse();
+my $argument = $ARGV[0];
+                                                                                
+# Fill in some variables which will be used later
+$context = $input{'context'};
+$priority = $input{'priority'};
+$callerid = $input{'callerid'};
+                                                                                
+$AGI->verbose("Entering payphone AGI: $context-$priority",3);
+$AGI->verbose("Incoming caller ID set to: $callerid", 3);
+$AGI->verbose("Argument passed: $argument", 3);                                                                                                                                
+if($argument =~ "initialratetest"){                                                                                                                                
+	$paid_call = initial_rate_test(4);
+	$AGI->verbose("Status of initial rate test: $paid_call", 3);
+	if($paid_call == 0){
+		$AGI->set_priority($priority + 101);
+	}
+}
+elsif($argument =~ "answersupervision"){
+	set_answer_supv(4);
+}
+elsif($argument =~ "refunddeposit"){
+	refund_deposit(4);
+}
+elsif($argument =~ "collectdeposit"){
+	collect_deposit(4);
+}
+	
+
+
+exit(0);
+

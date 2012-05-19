@@ -1,0 +1,62 @@
+#!/usr/bin/perl
+
+use strict;
+use integer;
+use Asterisk::AGI;
+
+my ($x,$client,$result,@response,$AGI,$tempint,$tempx10,$tempdec,$context,$priority,$callerid);
+
+$AGI= new Asterisk::AGI;
+
+
+
+sub get_temp{
+	my $device = shift @_;
+	my $channel = shift @_;
+	my $result;
+	my $cmdstr;
+	my $counts;
+	my $counts_per_C;
+	my $hantst;
+
+	$hantst = "/usr/local/sbin/hantst";
+	$cmdstr = sprintf("%s -s %02X 12 %02X 00 00 00 00", $hantst, $device, $channel); 
+
+	$result = `$cmdstr`;
+
+	if($? == 0){
+		@response = split(" ", $result);
+		$counts_per_C = $response[2];
+		$counts = unpack('s',pack('H4',$response[4] . $response[5]));
+#		print("counts = $counts, counts_per_C = $counts_per_C\n"); 
+		return (($counts * 90)/(5 * ($counts_per_C)) + 320);
+		}
+	else{
+		exit(1);
+	}
+}
+
+my %input = $AGI->ReadParse();
+                                                                                
+# Fill in some variables which will be used later
+$context = $input{'context'};
+$priority = $input{'priority'};
+$callerid = $input{'callerid'};
+                                                                                
+$AGI->verbose("Entering saytemp AGI: $context-$priority",3);
+                                                                                
+$tempx10 = get_temp(6,1);
+$tempint = $tempx10/10;
+$tempdec = $tempx10%10;
+
+
+$AGI->verbose("Incoming caller ID set to: $callerid", 3);
+$AGI->verbose("Outside temperature is $tempint degrees fahrenheit",3);                                                                                
+$AGI->say_number($tempint,1);
+$AGI->exec("playback", "point");
+$AGI->say_number($tempdec,1);
+$AGI->exec("playback", "degrees"); # say degrees fahrenheit
+$AGI->exec("playback", "fahrenheit"); # say degrees fahrenheit
+
+exit(0);
+
