@@ -1,8 +1,6 @@
+This project contains a daemon and associated utility programs for controlling Home Automation nodes on an RS-485 network
 
-This package contains a daemon and associated utility programs for controlling Home Automation 
-nodes on an RS-485 network
-
-Configure it by editing the Makefile. Adjust the install paths to suit your tasts.
+Configure it by editing the Makefile. Adjust the install paths to suit your tastes.
 
 Compile it by running:
   
