@@ -1,5 +1,3 @@
-han-0.0.3
-==============
 
 This package contains a daemon and associated utility programs for controlling Home Automation 
 nodes on an RS-485 network
@@ -14,15 +12,14 @@ Install it by running:
   
   make install
 
-The examples directory contains a sample han.conf and irr.conf. Use these as a starting point to
-create your own.
+The examples directory contains a sample han.conf and irr.conf. Use these as a starting point to create your own configurations.
 
 Any feedback is welcome!
 
 You can find the latest source distribution at:
 
-  http://members.home.net/highwaystar/han.html
+https://github.com/hwstar/hand
 
 For copyright notice and the authors see the source files.
 
-Steve Rodgers <hwstar@cox.net>
+Steve Rodgers <hwstar@rodgers.sdcoxmail.com>
