@@ -2,7 +2,7 @@
 /*
  * HAN daemon.  Handles the han hardware and client requests.
  *
- * Copyright(C) 1999,2002,2003,2011 Stephen Rodgers
+ * Copyright(C) 1999,2002,2003,2011,2012 Stephen Rodgers
  * Portions Copyright (C) 1999  Steven Brown
  * 
  * This program is free software; you can redistribute it and/or
@@ -1647,7 +1647,7 @@ int main(int argc, char *argv[]) {
 		si = fd_index(FD_INET_CMD);
 		if((si >= 0) && (pollfd[si].revents)){
 			struct sockaddr_storage peerAddress;
-			socklen_t peerAddressSize;
+			socklen_t peerAddressSize  = sizeof(struct sockaddr_storage);
 			char addrstr[INET6_ADDRSTRLEN];
 
 			
@@ -1672,7 +1672,7 @@ int main(int argc, char *argv[]) {
 		if((si >= 0) && (pollfd[si].revents)){
 
 			struct sockaddr_storage peerAddress;
-			socklen_t peerAddressSize;
+			socklen_t peerAddressSize = sizeof(struct sockaddr_storage);
 			char addrstr[INET6_ADDRSTRLEN];
 
 			/* Accept the user connection. */
@@ -1734,7 +1734,7 @@ int main(int argc, char *argv[]) {
 		si = fd_index(FD_INET_TEXT);
 		if((si >= 0) && (pollfd[si].revents)){
 			struct sockaddr_storage peerAddress;
-			socklen_t peerAddressSize;
+			socklen_t peerAddressSize  = sizeof(struct sockaddr_storage);
 			char addrstr[INET6_ADDRSTRLEN];
 
 			
@@ -1770,7 +1770,7 @@ int main(int argc, char *argv[]) {
 		if((si >= 0) && (pollfd[si].revents)){
 
 			struct sockaddr_storage peerAddress;
-			socklen_t peerAddressSize;
+			socklen_t peerAddressSize  = sizeof(struct sockaddr_storage);
 			char addrstr[INET6_ADDRSTRLEN];
 
 			/* Accept the user connection. */

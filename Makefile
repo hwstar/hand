@@ -1,7 +1,7 @@
 # Makefile
 
 PACKAGE = han
-VERSION = 0.0.9
+VERSION = 0.0.10
 CONTACT = <hwstar@rodgers.sdcoxmail.com>
 
 CC = gcc
