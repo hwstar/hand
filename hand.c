@@ -870,9 +870,9 @@ static int handTransmitPacket(hanioStuff *hanio, Han_Packet *packet, int rx_time
 static int handSend(hanioStuff *hanio, Han_Packet *packet) {
 	unsigned txCount;
 	int retVal = HAN_CSTS_OK;
-	int rxTimeout, done;
+	int done;
 	
-	for(txCount = 0, done = 0, rxTimeout = 0; (done == 0) && (txCount < (conf_max_retries + 1)); txCount++){
+	for(txCount = 0, done = 0 ; (done == 0) && (txCount < (conf_max_retries + 1)); txCount++){
 		switch((retVal = handTransmitPacket(hanio, packet, MAX_CMD_RESPONSE_TIME))){
 			case HAN_CSTS_OK:
 				done = 1;
@@ -1749,8 +1749,8 @@ int main(int argc, char *argv[]) {
 
 			/* Monitor sockets must be non-blocking */
 
-			if(fcntl(retval, F_SETFL, O_NONBLOCK) == -1) {
-				fatal("Could not set text socket to non-blocking.");
+			if(fcntl(user_socket, F_SETFL, O_NONBLOCK) == -1) {
+				fatal("Could not set text socket to non-blocking: %s", strerror(errno));
 			}
 	
 			/* Add it to the poll list if there's room */
@@ -1781,6 +1781,11 @@ int main(int argc, char *argv[]) {
 			}
 
 			debug(DEBUG_STATUS, "Accepting ipv6 text socket connection from %s",  inet_ntop(peerAddress.ss_family, munge_ip_address(&peerAddress), addrstr, sizeof(addrstr)));
+			/* Monitor sockets must be non-blocking */
+
+			if(fcntl(user_socket, F_SETFL, O_NONBLOCK) == -1) {
+				fatal("Could not set text socket to non-blocking: %s", strerror(errno));
+			}
 			
 			if(add_text_socket(user_socket))
 				close(user_socket);
