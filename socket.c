@@ -227,7 +227,7 @@ int socket_connect(char *socket_name) {
  */
 int socket_connect_ip(char *host, char *service, int family, int socktype) {
 
-	struct addrinfo hints, *list, *p, *ipv6 = NULL, *ipv4 = NULL;
+	struct addrinfo hints, *list = NULL, *p = NULL, *ipv6 = NULL, *ipv4 = NULL;
 	int sock, res;
 
 
