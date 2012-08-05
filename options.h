@@ -1,5 +1,5 @@
 /*
- * config.h.  Configuration header file for the han project
+ * options.h.  Configuration header file for the han project
  *
  * Copyright (C) 1999,2002,2003 Stephen Rodgers
  *

@@ -18,10 +18,6 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
- * 
- * Modified from ppowerd.c by Steve Rodgers on 8/7/99 originally written by:
- *
- * Steven Brown
  *
  * Stephen "Steve" Rodgers <hwstar@rodgers.sdcoxmail.com>
  *
@@ -32,6 +28,7 @@
 #include <getopt.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <limits.h>
 #include <time.h>
 #include <sys/time.h>
@@ -88,6 +85,8 @@
 #define MAX_CMD_RESPONSE_TIME		250000	// 250 milliseconds
 #define MAX_NODEID_RESPONSE_TIME	50000	// 50 milliseconds
 #define MAX_INTR_RESPONSE_TIME		10000	// 10 milliseconds
+#define POLL_TIMEOUT				1000	// 1000 milliseconds
+#define SERIAL_PORT_OPEN_RETRY_TIME 20		// 20 seconds
 
 /* Enums */
 
@@ -103,16 +102,16 @@ enum {NC_INTRX=1, NC_CRC16=2};
 
 /* Local prototypes. */
 
-static u8 calcCRC(void *buf, int len);
-static u16 calcCRC16(void *buf, int len);
+static uint8_t calcCRC(void *buf, int len);
+static uint16_t calcCRC16(void *buf, int len);
 static int packetCheck16(void *buf, int size);
-static void stuffPacketByte(u8 value, u8 **buffer, u16 *count);
+static void stuffPacketByte(uint8_t value, uint8_t **buffer, uint16_t *count);
 static int handTransmitPacket(hanioStuff *hanio, Han_Packet *packet, int rx_timeout);
 static int handSend(hanioStuff *hanio, Han_Packet *packet);
 static int handScanNetwork(hanioStuff *hanio, Han_Netscan *netscan);
 static int handDoPPower(char *command_string);
 static int handDoRawPacket(struct han_raw *rp);
-static void fd_setup(void);
+static int fd_setup(void);
 static void handReconfig(void);
 static void clientCommand(hanioStuff *hanio, Client_Command *client_command);
 static int confSaveString(char *value, short handling, void *result);
@@ -127,7 +126,7 @@ static void hand_show_help(void);
 static void hand_show_version(void);
 static void hand_exit(void);
 static int processClientCommand(int user_socket);
-static void process_interrupt_packet(u8 *buffer, int len);
+static void process_interrupt_packet(uint8_t *buffer, int len);
 static void send_broadcast_enum(void);
 
 /* Global things. */
@@ -185,7 +184,8 @@ static int conf_daemon_socket_gid = 0;
 static int conf_daemon_socket_mode = 0660;
 static unsigned conf_max_retries = CONF_MAX_RETRIES;	// Maximum number of retries
 static unsigned max_node_addr = MAX_NODE_ADDR;		// Maximum node address
-static u8 node_attributes[256];				// Node attribute array
+static uint8_t node_attributes[256];				// Node attribute array
+static uint8_t serial_port_open_timer = 0;
 
 
 
@@ -443,7 +443,7 @@ static void ts_printf(char *msg, ...)
 /* Initialization of file handles  */
 
 
-static void fd_setup(void){
+static int fd_setup(void){
 
 	int s;
 
@@ -453,9 +453,15 @@ static void fd_setup(void){
 	/* Open the han RS-485 interface. */
 	debug(DEBUG_STATUS, "Opening tty %s", conf_tty);
 
-	if(!(hanio = hanio_open(conf_tty)))
-		fatal("Could not open tty %s", conf_tty);
-
+	if(!(hanio = hanio_open(conf_tty))){
+		debug(DEBUG_UNEXPECTED, "Could not open tty %s", conf_tty);
+		return -1;
+	}
+	if(hanio_flush_input(hanio)){
+		debug(DEBUG_UNEXPECTED, "Could not flush serial input buffer");
+		return -1;
+	}
+	
 	add_poll_fd(hanio->fd, FD_RS485);
 
 
@@ -467,8 +473,10 @@ static void fd_setup(void){
 		/* Create the unix domain daemon socket used for commands */
 
 		debug(DEBUG_STATUS, "Creating unix domain socket '%s'", conf_daemon_socket_path);
-		if((s = socket_create(conf_daemon_socket_path, conf_daemon_socket_mode, conf_daemon_socket_uid, conf_daemon_socket_gid) == -1))
-			fatal("Could not create unix socket");
+		if((s = socket_create(conf_daemon_socket_path, conf_daemon_socket_mode, conf_daemon_socket_uid, conf_daemon_socket_gid) == -1)){
+			debug(DEBUG_UNEXPECTED, "Could not create unix socket");
+			return -1;
+		}
 		add_poll_fd(s, FD_UNIX_CMD);
 	}
 
@@ -478,15 +486,18 @@ static void fd_setup(void){
 		debug(DEBUG_STATUS, "Adding sockets on port/service %s", conf_service);
 	
 		if( socket_create_listen(conf_bindaddr[0] ? conf_bindaddr : NULL, conf_service, AF_UNSPEC, SOCK_STREAM, add_ip_socket_cmd)){
-			fatal("command socket_create_listen() failed");
+			debug(DEBUG_UNEXPECTED, "command socket_create_listen() failed");
+			return -1;
 		}
 	}
 
 
 	/* If no socket connection type defined, we can't do anything. Might as well quit now */
 
-	if(num_poll_fds < 2)
-		fatal("No command socket: (ipv4, ipv6, or unix domain) defined in config file");
+	if(num_poll_fds < 2){
+		debug(DEBUG_UNEXPECTED, "No command socket: (ipv4, ipv6, or unix domain) defined in config file");
+		return -1;
+	}
 
 	/* Create the ipv4/ipv6 socket if a text service port is defined */
 
@@ -494,11 +505,11 @@ static void fd_setup(void){
 		debug(DEBUG_STATUS, "Adding text sockets on port/service %s", conf_textservice);
 	
 		if( socket_create_listen(conf_bindaddr[0] ? conf_bindaddr : NULL, conf_textservice, AF_UNSPEC, SOCK_STREAM, add_ip_socket_text)){
-			fatal("text socket_create_listen() failed");
+			debug(DEBUG_UNEXPECTED, "text socket_create_listen() failed");
+			return -1;
 		}
 	}
-
-
+	return 0;
 }
 
 /*
@@ -583,7 +594,8 @@ static void handReconfig(void){
 		fatal("Could not re-write pid file '%s'", conf_pid_path);
 	}
 
-	fd_setup();
+	if(fd_setup())
+		fatal("fd_setup() failed during reconfig");
 
 }
 
@@ -592,10 +604,10 @@ static void handReconfig(void){
 * Calculate an 8 bit CRC of polynomial X^8+X^5+X^4+1
 */
 
-static u8 calcCRC(void *buf, int len){
-	u8 theBits, fb, crcReg = 0;
-	u8 *p = (u8 *) buf;
-	u16 i, j;
+static uint8_t calcCRC(void *buf, int len){
+	uint8_t theBits, fb, crcReg = 0;
+	uint8_t *p = (uint8_t *) buf;
+	uint16_t i, j;
 	
 	for(i = 0 ; i < len ; i++)
 	{
@@ -615,14 +627,14 @@ static u8 calcCRC(void *buf, int len){
 
 /* Calculate CRC over buffer using polynomial: X^16 + X^12 + X^5 + 1 */
 
-static u16 calcCRC16(void *buf, int len)
+static uint16_t calcCRC16(void *buf, int len)
 {
-	u8 i;
-	u16 crc = 0;
-	u8 *b = (u8 *) buf;
+	uint8_t i;
+	uint16_t crc = 0;
+	uint8_t *b = (uint8_t *) buf;
 
 	while(len--){
-		crc ^= (((u16) *b++) << 8);
+		crc ^= (((uint16_t) *b++) << 8);
 		for ( i = 0 ; i < 8 ; ++i ){
 			if (crc & 0x8000)
 				crc = (crc << 1) ^ 0x1021;
@@ -637,9 +649,9 @@ static u16 calcCRC16(void *buf, int len)
 
 static int packetCheck16(void *buf, int size)
 {
-	u16	rcrc16, crc16 =  calcCRC16(buf, size - sizeof(u16));
+	uint16_t	rcrc16, crc16 =  calcCRC16(buf, size - sizeof(uint16_t));
 
-	rcrc16 = *((u16 *)(((u8 *) buf) + (size - sizeof(u16))));
+	rcrc16 = *((uint16_t *)(((uint8_t *) buf) + (size - sizeof(uint16_t))));
 
 	debug(DEBUG_ACTION, "Rx CRC16: 0x%04X, Calc CRC16 0x%04X", rcrc16, crc16);
 
@@ -656,7 +668,7 @@ static int packetCheck16(void *buf, int size)
 * Stuff a packet byte in the buffer, performing any necessary substitutions
 */
 
-static void stuffPacketByte(u8 value, u8 **buffer, u16 *count){
+static void stuffPacketByte(uint8_t value, uint8_t **buffer, uint16_t *count){
 
 	if(value <= SUBST){
 		**buffer = SUBST;
@@ -681,8 +693,8 @@ static int handTransmitPacket(hanioStuff *hanio, Han_Packet *packet, int rx_time
 	unsigned char crcBuffer[4 + MAX_PARAMS];
 	unsigned char txBuffer[MAX_PARAMS*2 + 12];
 	unsigned char rxBuffer[MAX_PARAMS + 6];
-	u8 crc16 = node_attributes[packet->nodeaddress] & NC_CRC16;
-	u8 ack, nak;
+	uint8_t crc16 = node_attributes[packet->nodeaddress] & NC_CRC16;
+	uint8_t ack, nak;
 	
 	debug(DEBUG_ACTION, "Addressing node 0x%02x, command 0x%02x, Numparms 0x%02x, crc16 = %d", packet->nodeaddress, packet->nodecommand,packet->numnodeparams, crc16);
 
@@ -712,12 +724,12 @@ static int handTransmitPacket(hanioStuff *hanio, Han_Packet *packet, int rx_time
 
 	/* Calculate a CRC and place it in the packet */
 	if(crc16){
-		u8 crclo, crchi;
-		u16 crc = calcCRC16(crcBuffer, 3 + packet->numnodeparams);
+		uint8_t crclo, crchi;
+		uint16_t crc = calcCRC16(crcBuffer, 3 + packet->numnodeparams);
 		debug(DEBUG_ACTION, "TX CRC16: %04X", crc);
 
-		crclo = (u8) crc;
-		crchi = (u8) (crc >> 8);
+		crclo = (uint8_t) crc;
+		crchi = (uint8_t) (crc >> 8);
 		stuffPacketByte((crcBuffer[3 + packet->numnodeparams] = crclo), &p, &txPacketLen);
 		stuffPacketByte((crcBuffer[4 + packet->numnodeparams] = crchi), &p, &txPacketLen);
 	}
@@ -1282,7 +1294,7 @@ static int fd_index(int key)
 * Send interrupt packets to text sockets
 */
 
-static void process_interrupt_packet(u8 *buffer, int len)
+static void process_interrupt_packet(uint8_t *buffer, int len)
 {
 	int res;
 	Han_Packet packet;
@@ -1340,7 +1352,9 @@ int main(int argc, char *argv[]) {
 	int user_socket;
 	int longindex;
 	int optchar;
-	int i,si;
+	int si, i, bufcount = 0;
+	char done = FALSE, packet_state = IPS_INIT, subst = FALSE, sockrm, c;
+	static uint8_t buffer[256];
 	
 	
 
@@ -1444,7 +1458,8 @@ int main(int argc, char *argv[]) {
 		fatal("hand is already running");
 	}
 
-	fd_setup();
+	if(fd_setup())
+		fatal("fd_setup() failed during initialization");
 
    
 	/* Fork into the background. */
@@ -1524,15 +1539,12 @@ int main(int argc, char *argv[]) {
 	
 	/* We loop forever handling input and output. */
 
-	for(;;) {
-		u8 buffer[256];
-		char done, packet_state, subst, sockrm, c;
-
+	for(;;) { /* Main loop */
 		/* 
 		 * Wait for input to be available. 
 		 */
 		//debug(DEBUG_STATUS, "Waiting for events.");
-		retval=poll(pollfd, num_poll_fds, POLL_MAX_COUNT);
+		retval=poll(pollfd, num_poll_fds, POLL_TIMEOUT);
 		if(retval == -1) {
 			/* If we are interrupted, determine the cause  */
 			if(errno == EINTR) {
@@ -1547,81 +1559,106 @@ int main(int argc, char *argv[]) {
 			/* Nope, poll broke. */
 			fatal_with_reason(errno, "Poll failed");
 		}
+		if(!hanio){ /* If serial port closed */
+			if(serial_port_open_timer)
+				serial_port_open_timer--;
+			else{ /* Attempt to re-open serial port */
+				if(!fd_setup()){
+					done = subst = FALSE;
+					bufcount = 0;
+					debug(DEBUG_ACTION, "Serial port reopened successfully");
+				}
+				else{
+					debug(DEBUG_UNEXPECTED, "Serial port open failed, retrying...");	
+					serial_port_open_timer = SERIAL_PORT_OPEN_RETRY_TIME;
+				}
+			}
+			continue;		
+		}
+		
 		if(retval == 0){ /* The poll timed out */
 			continue;
 		}
-		debug(DEBUG_STATUS, "Woken for events");
 		
 
 		si = fd_index(FD_RS485);
-		if((si >= 0) && (pollfd[si].revents)) {
-	
-			/* Get the data bytes */
 
-			for(i = 0, packet_state = IPS_INIT, subst = 0, done = 0; !done && (i < 256); ){
-				retval = hanio_read(hanio, &c, 1, MAX_INTR_RESPONSE_TIME);
-				if(retval < 1)
-					break;
+		if((si >= 0) && (pollfd[si].revents)) {
+			/* Get the data bytes*/
+			while(!done){ /* Loop getting bytes */
+				retval = hanio_getchar(hanio, &c);
+				if(retval < 0){
+					if((errno != EAGAIN) && (errno != EWOULDBLOCK))
+						fatal_with_reason(errno, "Error reading from serial port");
+					else
+						break; /* Nothing more to read */
+						
+				}
+				else if(retval == 0){
+					hanio_close(hanio);
+					hanio = NULL;
+					close_all_polled_sockets();
+					serial_port_open_timer = SERIAL_PORT_OPEN_RETRY_TIME;
+					break;	
+				}
 				switch(packet_state){
 					case IPS_INIT:
+						subst = FALSE;
+						bufcount = 0;
 						if(c == STX)
 							packet_state = IPS_RCV;
-						else{
-							buffer[i++] = c;
-							packet_state = IPS_IGN;
-						}
+						else
+							debug(DEBUG_EXPECTED, "Garbage byte received: %02X",((uint8_t) c)& 0xFF);
 						break;
 
 					case IPS_RCV:
 						if(!subst){
-							if(c == ETX)
-								done = 1;
-							else if( c == SUBST)
-								subst = 1;
-							else
-								buffer[i++] = c;
+							if(c == ETX){
+								done = TRUE;
+								packet_state = IPS_INIT;
+							}
+							else if( c == SUBST){
+								subst = TRUE;
+							}
+							else{
+								buffer[bufcount++] = c;
+							}
 						}
 						else{
-							subst = 0;
-							buffer[i++] = c;
+							subst = FALSE;
+							buffer[bufcount++] = c;
 						}
-						break;
-
-					case IPS_IGN:
-						buffer[i++] = c;
 						break;
 
 					default:
-						done = 1;
+						packet_state = IPS_INIT;
 						break;
 				}
-			}
-
-							
-			if(!retval || !done || (i == 3 && buffer[0] != HDCINTRQ) || (i == 4 && buffer[0] != HDCINTRQ16)){
-				debug(DEBUG_UNEXPECTED, "Spurious data received on network");
-
-				/* Count the event */
-
-				error_stats.spurious_packets++;
-				debug_hexdump(DEBUG_UNEXPECTED, buffer, i,"Spurious bytes: ");
-			}
-			else{
+			} /* End while */
+			if(!hanio) /* If no serial port, there isn't much sense in executing the rest of the main loop */
+				continue;
+				
+			if(done){ /* If packet received */
+				done = FALSE;
+				/* exit(0); */
 				if(buffer[0] == HDCINTRQ){
-					if(calcCRC(buffer , i))
+					if(calcCRC(buffer , bufcount))
 						debug(DEBUG_UNEXPECTED,"Bad CRC8 on interrupt packet");
 					else
-						process_interrupt_packet(buffer, i);
+						process_interrupt_packet(buffer, bufcount);
 				}
-				else{
-					if(packetCheck16(buffer, i))
+				else if (buffer[0] == HDCINTRQ16){
+					if(packetCheck16(buffer, bufcount))
 						debug(DEBUG_UNEXPECTED,"Bad CRC16 on interrupt packet");
 					else
-						process_interrupt_packet(buffer, i);
-				}		
+						process_interrupt_packet(buffer, bufcount);
+				}
+				else
+						debug_hexdump(DEBUG_ACTION, buffer, bufcount, "Invalid packet received: ");
+	
 			}
 				
-		}
+		} /* End if serial event */
 		
 		/* 
 		 * Was it a new unix domain client connection?
@@ -1792,8 +1829,7 @@ int main(int argc, char *argv[]) {
 			else{
 				debug(DEBUG_EXPECTED, "num_poll_fds = %d", num_poll_fds);
 			}
-
 		}
-
 	}
+	exit(-1);
 }

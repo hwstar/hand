@@ -25,6 +25,7 @@
 #include "options.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <popt.h>
@@ -565,10 +566,10 @@ static void irrIrrigate(int argc, char **argv){
 	Irr_Controller_Listent *pmController, *targetController;
 	Irr_Prog_Listent *program;
 	Irr_Prog_Sequence *seq;
-	u16 i, sleeptime;
+	uint16_t i, sleeptime;
 	char *off_valve_name = NULL;
 	char *value;
-	u8 acfail;	
+	uint8_t acfail;	
 	time_t t;
 	long sced;
 	struct tm *now;

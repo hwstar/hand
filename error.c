@@ -26,6 +26,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <stdarg.h>
 #include <assert.h>
@@ -179,7 +180,7 @@ void debug_hexdump(int level, void *buf, int buflen, char *message, ...){
 		fprintf(LOGOUT,"%s: (debug): ",progname);
 		vfprintf(LOGOUT,message,ap);
 		for(i = 0 ; i < buflen ; i++)
-			fprintf(LOGOUT,"%02X ",((int) ((u8 *)buf)[i]) & 0xFF);
+			fprintf(LOGOUT,"%02X ",((int) ((uint8_t *)buf)[i]) & 0xFF);
 		fprintf(LOGOUT,"\n");
 	}
 }

@@ -67,7 +67,6 @@ static void scanNetwork(int argc, char **argv);
 static void buildCommand(int argc, char **argv);
 static void doPPower( int argc, char **argv);
 static int  confSaveString(char *value, short handling, void *result);
-static int  confFlag(char *value, short handling, void *result);
 static int  confOrFlag(char *value, short handling, void *result);
 static void printByteSequence(unsigned char *p, int len);
 static void hantstShowHelp(void);
@@ -479,18 +478,6 @@ static int confSaveString(char *value, short handling, void *result){
 	return PASS;
 }
 
-/* Save a configuration flag */
-
-static int confFlag(char *value, short handling, void *result){
-	int *p = (int *) result;
-	if(!strcmp(value, "yes"))
-		*p = 1;
-	else if(!strcmp(value, "no"))
-		*p = 0;
-	else
-		*p = atoi(value);
-	return PASS;
-}
 
 /* Save a configuration flag, but only allow it to be set, not reset */
 

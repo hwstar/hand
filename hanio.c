@@ -1,10 +1,8 @@
 /*
  * Handle the RS-485 interface to the hardware nodes
  *
- * Modified from x10.c by Steve Rodgers
- * Credit for x10.c work goes to Steven Brown <swbrown@ucsd.edu>
  *
- * Copyright (C) 1999 Stephen Rodgers 
+ * Copyright (C) 1999,2011 Stephen Rodgers 
  *
  * 
  * This program is free software; you can redistribute it and/or
@@ -23,7 +21,6 @@
  * 
  * Stephen "Steve" Rodgers <hwstar@cox.net>
  *
- * $Id$
  */
 
 #include "tnd.h"
@@ -62,7 +59,7 @@ hanioStuff *hanio_open(char *han_tty_name) {
 	 */
 	hanio->fd=open(han_tty_name, O_RDWR | O_NOCTTY | O_NDELAY);
 	if(hanio->fd == -1) {
-		fatal_with_reason(errno, "Could not open tty '%s'",han_tty_name);
+		return NULL;
 	}
 	
 	
@@ -70,12 +67,16 @@ hanioStuff *hanio_open(char *han_tty_name) {
 	
 	/* We don't want to block reads. */
 	if(fcntl(hanio->fd, F_SETFL, O_NONBLOCK) == -1) {
-		fatal_with_reason(errno, "Could not set hanio to non-blocking");
+		debug(DEBUG_UNEXPECTED,"Could not set hanio to non-blocking");
+		hanio_close(hanio);
+		return NULL;
 	}
 	
 	/* Get the current tty settings. */
 	if(tcgetattr(hanio->fd, &termios) != 0) {
-		fatal_with_reason(errno, "Could not get tty attributes");
+		debug(DEBUG_UNEXPECTED, "Could not get tty attributes");
+		hanio_close(hanio);
+		return NULL;
 	}
 	
 	/* Enable receiver. */
@@ -94,15 +95,21 @@ hanioStuff *hanio_open(char *han_tty_name) {
 	
 	/* Set the speed of the port. */
 	if(cfsetospeed(&termios, B9600) != 0) {
-		fatal("Could not set tty output speed.");
+		debug(DEBUG_UNEXPECTED, "Could not set tty output speed.");
+		hanio_close(hanio);
+		return NULL;
 	}
 	if(cfsetispeed(&termios, B9600) != 0) {
-		fatal("Could not set tty input speed.");
+		debug(DEBUG_UNEXPECTED, "Could not set tty input speed.");
+		hanio_close(hanio);
+		return NULL;
 	}
 	
 	/* Save our modified settings back to the tty. */
 	if(tcsetattr(hanio->fd, TCSANOW, &termios) != 0) {
-		fatal_with_reason(errno, "Could not set tty attributes");
+		debug(DEBUG_UNEXPECTED, "Could not set tty attributes");
+		hanio_close(hanio);
+		return NULL;
 	}
 	
 	return(hanio);
@@ -111,8 +118,11 @@ hanioStuff *hanio_open(char *han_tty_name) {
 /* Close the TTY port, and free the hanio structure */
 
 void hanio_close(hanioStuff *hanio){
-	close(hanio->fd);
-	free(hanio);
+	if(hanio){
+		close(hanio->fd);
+		free(hanio);
+	}
+		
 }
 
 /* 
@@ -215,6 +225,15 @@ int hanio_wait_write(hanioStuff *hanio, int tx_timeout) {
 	}
 }
 
+/*
+ * Read one character into a location pointed to by C, return the result
+ */
+ 
+ 
+int hanio_getchar(hanioStuff *hanio, char *c)
+{
+	return read(hanio->fd, c, 1);
+}
 
 /* 
  * Read data from the hanio hardware.
@@ -285,5 +304,15 @@ ssize_t hanio_write(hanioStuff *hanio, void *buf, size_t count, int tx_timeout) 
 	
 	/* We're all done. */
 	return(bytes_written);
+}
+
+/* Flush the input buffer */
+
+int hanio_flush_input(hanioStuff *hanio)
+{
+	int res = -1;
+	if(hanio)
+		res = tcflush(hanio->fd, TCIFLUSH);
+	return res;
 }
 
