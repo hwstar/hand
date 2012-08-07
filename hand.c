@@ -97,8 +97,9 @@ enum {IPS_INIT=0, IPS_RCV, IPS_IGN};
 enum {NC_INTRX=1, NC_CRC16=2};
 
 
-/* Structs */
+/* Typedefs */
 
+typedef uint8_t bool;
 
 /* Local prototypes. */
 
@@ -679,6 +680,86 @@ static void stuffPacketByte(uint8_t value, uint8_t **buffer, uint16_t *count){
 	**buffer = value;
 	(*buffer)++;
 	(*count)++;
+}
+
+/*
+ * Poll for a response.
+ * Setting init true and count to point to a int, initializes the receiver
+ * Setting init false, count to point to an int, and buffer to point to a buffer processes incoming characters
+ * 
+ * Once a packet is received, 1 will be returned.
+ * If the serial port is closed due to a disconnect, then a -1 will be returned
+ * If a packet has not been completely received, a 0 will be returned
+ * Init will always return a 0.
+ */
+ 
+static int handPollForResponse(bool init, uint8_t *buffer, int *count)
+{
+	int retval;
+	char c;
+	static int packet_state;
+	static char subst, done;
+	
+	
+	if(count && init){ /* Reset persistent variables */
+		packet_state = IPS_INIT;
+		subst = done = FALSE;
+		*count = 0;
+		return 0;
+	}
+	
+	if(!buffer || !count)
+		fatal("NULL pointer passed to handPollForResponse");
+	
+	while(!done){ /* Loop getting bytes */
+		retval = hanio_getchar(hanio, &c);
+		if(retval < 0){
+			if((errno != EAGAIN) && (errno != EWOULDBLOCK))
+				fatal_with_reason(errno, "Error reading from serial port");
+			else
+				return 0; /* Nothing more to read */
+						
+		}
+		else if(retval == 0){
+			hanio_close(hanio);
+			hanio = NULL;
+			close_all_polled_sockets();
+			serial_port_open_timer = SERIAL_PORT_OPEN_RETRY_TIME;
+			return -1;	
+		}
+		switch(packet_state){
+			case IPS_INIT:
+				if(c == STX)
+					packet_state = IPS_RCV;
+				else
+					debug(DEBUG_EXPECTED, "Garbage byte received: %02X",((uint8_t) c)& 0xFF);
+				break;
+
+			case IPS_RCV:
+				if(!subst){
+					if(c == ETX){
+						done = TRUE;
+						packet_state = IPS_INIT;
+					}
+					else if( c == SUBST){
+						subst = TRUE;
+					}
+					else{
+						buffer[(*count)++] = c;
+					}
+				}
+				else{
+					subst = FALSE;
+					buffer[(*count)++] = c;
+				}
+				break;
+
+			default:
+				packet_state = IPS_INIT;
+				break;
+		}
+	} /* End while */
+	return 1;
 }
 
 
@@ -1353,7 +1434,7 @@ int main(int argc, char *argv[]) {
 	int longindex;
 	int optchar;
 	int si, i, bufcount = 0;
-	char done = FALSE, packet_state = IPS_INIT, subst = FALSE, sockrm, c;
+	char sockrm;
 	static uint8_t buffer[256];
 	
 	
@@ -1533,6 +1614,8 @@ int main(int argc, char *argv[]) {
 	sigaction(SIGPIPE, &brkpipe_sig_action, NULL);
 	sigaction(SIGCHLD, &child_sig_action, NULL);
 
+	handPollForResponse(TRUE, NULL, &bufcount); /* Reset receiver */
+
 	/* Send one broadcast enum packet to set up CRC16 transfers on capable nodes */
 
 	send_broadcast_enum();
@@ -1564,8 +1647,7 @@ int main(int argc, char *argv[]) {
 				serial_port_open_timer--;
 			else{ /* Attempt to re-open serial port */
 				if(!fd_setup()){
-					done = subst = FALSE;
-					bufcount = 0;
+					handPollForResponse(TRUE, NULL, &bufcount); /* Reset receiver */
 					debug(DEBUG_ACTION, "Serial port reopened successfully");
 				}
 				else{
@@ -1585,62 +1667,12 @@ int main(int argc, char *argv[]) {
 
 		if((si >= 0) && (pollfd[si].revents)) {
 			/* Get the data bytes*/
-			while(!done){ /* Loop getting bytes */
-				retval = hanio_getchar(hanio, &c);
-				if(retval < 0){
-					if((errno != EAGAIN) && (errno != EWOULDBLOCK))
-						fatal_with_reason(errno, "Error reading from serial port");
-					else
-						break; /* Nothing more to read */
-						
-				}
-				else if(retval == 0){
-					hanio_close(hanio);
-					hanio = NULL;
-					close_all_polled_sockets();
-					serial_port_open_timer = SERIAL_PORT_OPEN_RETRY_TIME;
-					break;	
-				}
-				switch(packet_state){
-					case IPS_INIT:
-						subst = FALSE;
-						bufcount = 0;
-						if(c == STX)
-							packet_state = IPS_RCV;
-						else
-							debug(DEBUG_EXPECTED, "Garbage byte received: %02X",((uint8_t) c)& 0xFF);
-						break;
-
-					case IPS_RCV:
-						if(!subst){
-							if(c == ETX){
-								done = TRUE;
-								packet_state = IPS_INIT;
-							}
-							else if( c == SUBST){
-								subst = TRUE;
-							}
-							else{
-								buffer[bufcount++] = c;
-							}
-						}
-						else{
-							subst = FALSE;
-							buffer[bufcount++] = c;
-						}
-						break;
-
-					default:
-						packet_state = IPS_INIT;
-						break;
-				}
-			} /* End while */
+			int res = handPollForResponse(FALSE, buffer, &bufcount);
+			
 			if(!hanio) /* If no serial port, there isn't much sense in executing the rest of the main loop */
 				continue;
 				
-			if(done){ /* If packet received */
-				done = FALSE;
-				/* exit(0); */
+			if(res){ /* If packet received */
 				if(buffer[0] == HDCINTRQ){
 					if(calcCRC(buffer , bufcount))
 						debug(DEBUG_UNEXPECTED,"Bad CRC8 on interrupt packet");
@@ -1655,7 +1687,7 @@ int main(int argc, char *argv[]) {
 				}
 				else
 						debug_hexdump(DEBUG_ACTION, buffer, bufcount, "Invalid packet received: ");
-	
+				handPollForResponse(TRUE, NULL, &bufcount); /* Reset receiver */
 			}
 				
 		} /* End if serial event */
