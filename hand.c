@@ -610,6 +610,9 @@ static uint8_t calcCRC(void *buf, int len){
 	uint8_t *p = (uint8_t *) buf;
 	uint16_t i, j;
 	
+	if(!len)
+		return FAIL;
+	
 	for(i = 0 ; i < len ; i++)
 	{
 		theBits = *p++;
@@ -633,6 +636,9 @@ static uint16_t calcCRC16(void *buf, int len)
 	uint8_t i;
 	uint16_t crc = 0;
 	uint8_t *b = (uint8_t *) buf;
+	
+	if(!len)
+		return FAIL;
 
 	while(len--){
 		crc ^= (((uint16_t) *b++) << 8);
@@ -650,7 +656,12 @@ static uint16_t calcCRC16(void *buf, int len)
 
 static int packetCheck16(void *buf, int size)
 {
-	uint16_t	rcrc16, crc16 =  calcCRC16(buf, size - sizeof(uint16_t));
+	uint16_t	rcrc16, crc16;
+	
+	if(!size)
+		return FAIL; /* Zero length is bad */
+	
+	crc16 =  calcCRC16(buf, size - sizeof(uint16_t));
 
 	rcrc16 = *((uint16_t *)(((uint8_t *) buf) + (size - sizeof(uint16_t))));
 
@@ -759,6 +770,7 @@ static int handPollForResponse(bool init, uint8_t *buffer, int *count)
 				break;
 		}
 	} /* End while */
+	done = 0;
 	return 1;
 }
 
@@ -770,7 +782,8 @@ static int handPollForResponse(bool init, uint8_t *buffer, int *count)
 static int handTransmitPacket(hanioStuff *hanio, Han_Packet *packet, int rx_timeout) {
 	int i,retval;
 	unsigned char *p;
-	unsigned short done, rxState, rxPacketLen, txPacketLen = 1;
+	int rxPacketLen;
+	unsigned short txPacketLen = 1;
 	unsigned char crcBuffer[4 + MAX_PARAMS];
 	unsigned char txBuffer[MAX_PARAMS*2 + 12];
 	unsigned char rxBuffer[MAX_PARAMS + 6];
@@ -832,8 +845,12 @@ static int handTransmitPacket(hanioStuff *hanio, Han_Packet *packet, int rx_time
 
 	retval = hanio_write(hanio, txBuffer, txPacketLen, MAX_WRITE_BUSY_TIME);
 	if(retval != txPacketLen){
-		debug(DEBUG_UNEXPECTED, "Packet transmit timeout");
-		return HAN_CSTS_TX_TIMEOUT;
+		debug(DEBUG_UNEXPECTED, "Serial port write error. Closing port to re-open later");
+		hanio_close(hanio);
+		hanio = NULL;
+		close_all_polled_sockets();
+		serial_port_open_timer = SERIAL_PORT_OPEN_RETRY_TIME;	
+		return HAN_CSTS_SERIAL_DISCONNECT;
 	}
 
 	debug(DEBUG_ACTION,"TX packet sent.");
@@ -845,73 +862,21 @@ static int handTransmitPacket(hanioStuff *hanio, Han_Packet *packet, int rx_time
 		return HAN_CSTS_OK;
 	}
 	
-	// Remove stuffed bytes and copy to rxBuffer looking for ETX
- 	
-	for(p = rxBuffer, rxState = RXP_WAIT_STX, done = 0, rxPacketLen = 0 ; (done != 1) && (rxPacketLen < MAX_NODE_PARAMS + 6) ;){
-		retval = hanio_read(hanio, p, 1, rx_timeout);
-		if(retval == 0){
-			if(rxPacketLen == 0){
-				debug(DEBUG_UNEXPECTED, "Packet receive timeout, no bytes received");
-				return HAN_CSTS_RX_TIMEOUT;
-			}
-			else{
-				debug(DEBUG_UNEXPECTED, "Timeout after receiving partial packet, returning: FRAMING ERROR");
-				return HAN_CSTS_FRAMING_ERROR;
-			}
+ 	handPollForResponse(TRUE, NULL, &rxPacketLen);
+	for(;;){
+		int res;
+		if(!rxPacketLen && !hanio_wait_read(hanio, rx_timeout)){
+			return HAN_CSTS_RX_TIMEOUT;
 		}
-		 
-
-		switch(rxState){
-			
-			case RXP_WAIT_STX:
-				if(*p != STX){
-					debug(DEBUG_UNEXPECTED, "Packet framing error, no STX");
-					return HAN_CSTS_FRAMING_ERROR;
-				}
-				rxPacketLen = 0;
-				rxState = RXP_GET_FRAME;
+		
+		res = handPollForResponse(FALSE, rxBuffer ,&rxPacketLen);
+		if(res < 0){
+			return HAN_CSTS_SERIAL_DISCONNECT;
+		}
+		else if (res == 1){
 				break;
-				
-			case RXP_GET_FRAME:
-				switch(*p){
-					case SUBST:
-						rxState = RXP_STORE_SUBST;
-						break;
-						
-					case STX:
-						p = rxBuffer;
-						rxPacketLen = 0;
-						break;
-						
-					case ETX:
-						done = 1;
-						break;
-					
-					default:
-						if(*p > SUBST){
-							p++;
-							rxPacketLen++;
-						}
-						break;
-				}						
-				break;
-				
-			case RXP_STORE_SUBST:
-				p++;
-				rxPacketLen++;
-				rxState = RXP_GET_FRAME;			
-				break;
-			
-			default:
-				panic("Unknown state reached in packet state machine %d\n", rxState);
-				break;
-		}			
+		}
 	}
-	if(!done){
-		debug(DEBUG_UNEXPECTED,"Packet framing error, no ETX");
-		return HAN_CSTS_FRAMING_ERROR;
-	}
-
 	
 	// Check the packet
 
@@ -976,8 +941,7 @@ static int handSend(hanioStuff *hanio, Han_Packet *packet) {
 				error_stats.rx_timeouts++;
 				break;
 			
-			case HAN_CSTS_TX_TIMEOUT:
-				error_stats.tx_timeouts++;
+			case HAN_CSTS_SERIAL_DISCONNECT:
 				done = 1;
 				break;
 			
@@ -1213,6 +1177,11 @@ static int processClientCommand(int user_socket){
 	/* Process the command */
 
 	clientCommand(hanio, &client_command);
+	
+	if(client_command.commstatus == HAN_CSTS_SERIAL_DISCONNECT){
+		
+		return FAIL;
+	}
 	
 	/* Send a response to the controlling process */
 	
@@ -1693,21 +1662,21 @@ int main(int argc, char *argv[]) {
 		} /* End if serial event */
 		
 		/* 
-		 * Was it a new unix domain client connection?
+		 * Was it a new client connection?
 		 */
 		si = fd_index(FD_UNIX_CMD);
 		if((si >= 0) && (pollfd[si].revents)){
 
-			debug(DEBUG_STATUS, "Accepting unix domain socket connection");
+			debug(DEBUG_STATUS, "Accepting socket connection");
 			
 			/* Accept the user connection. */
 			user_socket=accept(pollfd[si].fd, NULL, NULL);
 			if(user_socket == -1) {
-				debug(DEBUG_UNEXPECTED, "Could not accept unix domain socket");
+				debug(DEBUG_UNEXPECTED, "Could not accept socket");
 				continue;
 			}
 			if(processClientCommand(user_socket))
-				continue;	
+				continue;	/* Got an error, restart at the top */
 		}
 
 		/*
@@ -1788,7 +1757,7 @@ int main(int argc, char *argv[]) {
 					}
 					else{
 						debug(DEBUG_STATUS,"Bytes read: %d\n", res);
-						text_command(i, (char *) buffer, res);
+						text_command(i, (char *) buffer, res); // FIXME
 						break;
 					}
 				}

@@ -58,4 +58,5 @@ ssize_t hanio_read(hanioStuff *hanio, void *buf, size_t count, int rx_timeout);
 ssize_t hanio_write(hanioStuff *hanio, void *buf, size_t count, int tx_timeout);
 int hanio_flush_input(hanioStuff *hanio);
 
+
 #endif

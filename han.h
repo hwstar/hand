@@ -75,6 +75,7 @@ typedef struct hand_info Hand_Info;
 #define HAN_CSTS_PPOWER_CONFIG_ERROR -10
 #define HAN_CSTS_PPOWER_FORK_ERROR -11
 #define HAN_CSTS_INVPARM -14
+#define	HAN_CSTS_SERIAL_DISCONNECT -15
 
 
 /* PPOWER definitions */
